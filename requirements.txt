@@ -1,0 +1,7 @@
+streamlit
+pandas
+plotly
+openpyxl
+snowflake-connector-python[pandas]
+python-dotenv
+requests

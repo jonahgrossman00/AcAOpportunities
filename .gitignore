@@ -1,0 +1,9 @@
+.env
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+
+# Pulled Salesforce data -- real account/revenue data, never committed
+# (pull_opportunities.py regenerates this locally; the deployed app can
+# use the in-app CSV uploader, or pull live using st.secrets credentials).
+*.csv
