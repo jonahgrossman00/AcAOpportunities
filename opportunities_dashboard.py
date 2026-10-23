@@ -12,8 +12,8 @@ as five tabs. Tabs 1-3 share the same layout/logic (via
 different, owner-centric layout (via `render_owner_insights`); tab 5 is a
 different, segment-trend layout (via `render_trends`):
 
-  - "Opportunities": every opportunity, no Type restriction (the original
-    single-page dashboard). Also carries the Line of Business chart
+  - "All Opportunities": every opportunity, no Type restriction (the
+    original single-page dashboard). Also carries the Line of Business chart
     (`show_lob_chart=True` -- a Potential Amount by Line of Business chart,
     top 6 + Other, after Chart 2b) since it's the one tab with the full,
     unrestricted product portfolio.
@@ -60,9 +60,6 @@ a "Data source" expander above them.
     Expected Revenue otherwise.
   - Chart 3: Accounts by Potential Amount (First 12 Month Revenue if Won,
     else Amount), stacked by Stage.
-  - Chart 3b (Opportunities tab only): Total ACV -- SUM(Last Year of
-    Current ACV), trended by year regardless of the Granularity selector
-    (same by-year convention as Chart 2c), across all Opp't Types.
   - Chart 4: First 12 Month Revenue distribution (box-and-whisker) per
     period, Closed Won opportunities only.
 
@@ -982,7 +979,6 @@ def render_dashboard(
     allowed_types=None,
     show_date_field_toggle=False,
     show_renewal_rates_chart=False,
-    show_total_acv_chart=False,
     show_lob_chart=False,
 ):
     """
@@ -1317,33 +1313,6 @@ def render_dashboard(
 
             st.divider()
 
-            if show_total_acv_chart:
-                # ── Total ACV ──────────────────────────────────────────────────
-                # Always trended by year regardless of the Granularity
-                # selector, same convention as the Renewals tab's
-                # Product/Client/Revenue Percentage chart -- uses fdf directly
-                # (every active filter applies) and respects the Close Date /
-                # LA Expiration Date toggle, when this tab has one.
-                st.subheader("Total ACV")
-                acv_years = sorted(fdf[date_field_col].dt.year.dropna().unique().astype(int))
-                acv_year_labels = [str(y) for y in acv_years]
-                acv_by_year = [
-                    fdf.loc[fdf[date_field_col].dt.year == y, "Last Year of Current ACV"].sum() for y in acv_years
-                ]
-                st.plotly_chart(
-                    make_longitudinal_lines(
-                        [("Total ACV", AMOUNT_COLOR, acv_by_year)],
-                        "Total ACV",
-                        acv_year_labels,
-                        x_title="Year",
-                        y_title="Last Year of Current ACV ($)",
-                    ),
-                    width="stretch",
-                    key=f"{tab_ns}_total_acv_chart",
-                )
-
-                st.divider()
-
             # ── Chart 4: First 12 Month Revenue distribution, by period (Closed Won only) ──
             st.subheader("First 12 Month Revenue Distribution (Closed Won)")
             st.caption(
@@ -1596,9 +1565,8 @@ def render_owner_insights(df_base, has_la_exp, *, tab_ns, page_title):
     Owner-centric tab: same filter panel as the other tabs, but tables and
     leaderboards instead of the longitudinal charts. Always buckets by
     calendar year (ignores the Granularity selector, same convention as the
-    Total ACV / Product-Client-Revenue Percentage charts elsewhere) and uses
-    Close Date only (no Contract Date Metric toggle). No click-to-filter
-    interactivity.
+    Product-Client-Revenue Percentage chart elsewhere) and uses Close Date
+    only (no Contract Date Metric toggle). No click-to-filter interactivity.
     """
     st.title(page_title)
 
@@ -1734,7 +1702,7 @@ def render_owner_insights(df_base, has_la_exp, *, tab_ns, page_title):
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
-        "Opportunities",
+        "All Opportunities",
         "Renewals Longitudinal Dashboard",
         "Non-Renewals Longitudinal Dashboard",
         "Opportunity Owner Insights",
@@ -1748,7 +1716,6 @@ with tab1:
         has_la_exp,
         tab_ns="tab1",
         page_title="AcA Opportunities Longitudinal Dashboard",
-        show_total_acv_chart=True,
         show_lob_chart=True,
     )
 
