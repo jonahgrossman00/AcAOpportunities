@@ -185,6 +185,41 @@ st.markdown(
     div[data-baseweb="select"] {
         height: auto !important;
     }
+
+    /* Newer Streamlit releases replaced the BaseWeb widget above with a
+       React Aria combobox (no data-baseweb attributes at all) -- confirmed
+       by inspecting the actual deployed app, which was still truncating
+       despite the rules above matching nothing there. Its open dropdown's
+       width is copied live from the closed trigger's rendered width, so
+       widening the trigger (instead of fighting the dropdown's internal,
+       virtualized-list fixed pixel widths) widens the dropdown to match,
+       with no risk of wrapped option text overlapping between rows. */
+    div[data-testid="stMultiSelect"] {
+        width: min(360px, 92vw) !important;
+    }
+    div[data-testid="stMultiSelect"] .react-aria-ComboBox,
+    div[data-testid="stMultiSelect"] div[role="group"] {
+        width: 100% !important;
+        max-width: none !important;
+    }
+    div[data-testid="stMultiSelectDropdown"] [data-item-hl] {
+        overflow: visible !important;
+        text-overflow: unset !important;
+    }
+    /* Selected-value tag pills in that same newer widget. */
+    div[data-testid="stMultiSelectTagsContainer"] span[data-tag] {
+        max-width: none !important;
+        height: auto !important;
+    }
+    div[data-testid="stMultiSelectTagsContainer"] span[title] {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        max-width: none !important;
+    }
+    div[data-testid="stMultiSelectTagsContainer"] span[role="group"] {
+        flex-wrap: wrap !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
