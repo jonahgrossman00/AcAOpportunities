@@ -1698,6 +1698,33 @@ def render_owner_insights(df_base, has_la_exp, *, tab_ns, page_title):
                 key=f"{tab_ns}_open_pipeline_chart",
             )
 
+        st.divider()
+
+        # ── Chart: Revenue Lost by Owner ─────────────────────────────────────
+        st.subheader("Revenue Lost by Owner")
+        st.caption(
+            "Sum of Potential Amount (deal size) for Closed Lost opportunities, ranked highest to lowest -- "
+            "how much revenue walked away, by owner."
+        )
+        lost_mask = fdf["Stage"] == "(6b/6) Closed Lost"
+        rev_lost = fdf[lost_mask].groupby("Opportunity Owner")["Potential Amount"].sum()
+        rev_lost = rev_lost[rev_lost > 0].sort_values(ascending=False)
+        if rev_lost.empty:
+            st.info("No Closed Lost opportunities in the current filters.")
+        else:
+            st.plotly_chart(
+                make_owner_leaderboard(
+                    rev_lost.index.tolist(),
+                    rev_lost.values.tolist(),
+                    STATUS_BAD,
+                    "Revenue Lost by Owner",
+                    x_title="Potential Amount ($)",
+                    y_title="Opportunity Owner",
+                ),
+                width="stretch",
+                key=f"{tab_ns}_revenue_lost_chart",
+            )
+
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
