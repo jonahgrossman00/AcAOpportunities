@@ -7,9 +7,10 @@ that, data loads live from Salesforce via pull_opportunities.fetch_opportunities
 (cached process-wide for LIVE_PULL_TTL_SECONDS, with a manual "Refresh
 Salesforce data now" button), falling back to the local opportunities_report.csv
 or an uploaded CSV if the live pull isn't available. It then renders the data
-as five tabs. Tabs 1-3 share the same layout/logic (via
+as six tabs. Tabs 1-3 share the same layout/logic (via
 `render_dashboard`) but scope the underlying data differently; tab 4 is a
-different, owner-centric layout (via `render_owner_insights`); tab 5 is a
+different, owner-centric layout (via `render_owner_insights`); tab 5 is its
+account-centric mirror (via `render_account_insights`); tab 6 is a
 different, segment-trend layout (via `render_trends`):
 
   - "All Opportunities": every opportunity, no Type restriction (the
@@ -27,6 +28,11 @@ different, segment-trend layout (via `render_trends`):
   - "Opportunity Owner Insights": no Type restriction, same filter panel as
     the other tabs (via the shared `render_filter_panel`), but tables and
     leaderboards instead of the longitudinal charts -- see that function's
+    docstring for the full breakdown. Includes a dollar-weighted "Revenue
+    Renewal % by Owner and Year" table (scoped to Renewal-type opportunities
+    only), alongside the count-based "Product Renewal %" table.
+  - "Account Insights": no Type restriction, same filter panel, an
+    account-level mirror of Owner Insights -- see `render_account_insights`'s
     docstring for the full breakdown.
   - "Trends": no Type restriction, same filter panel, but just one "Number
     of Opportunities by [Dimension]" chart per dimension -- Account Health
@@ -739,16 +745,26 @@ def make_renewal_rate_chart(years, product_pct, client_pct, revenue_pct, title, 
     return fig
 
 
-def make_owner_leaderboard(owners, values, color, title, x_title, y_title, height=None):
+def make_owner_leaderboard(owners, values, color, title, x_title, y_title, height=None, counts=None):
     """
     Horizontal bar chart, one bar per owner, sorted descending (`owners`/
     `values` must already be in that order) -- `autorange="reversed"` puts
     the first (highest-value) owner at the top of the chart, matching how a
     leaderboard reads. Height grows with the number of owners so bars never
     get squished.
+
+    `counts`, if given (aligned to `owners`/`values`), adds an "N
+    opportunities" line to each bar's hover -- e.g. for a per-account
+    leaderboard, to surface accounts with multiple opportunities at a glance.
     """
     if height is None:
         height = max(320, 90 + 28 * len(owners))
+    hovertemplate = "<b>%{y}</b><br>" + f"{x_title}: " + "$%{x:,.0f}"
+    customdata = None
+    if counts is not None:
+        hovertemplate += "<br>%{customdata}"
+        customdata = [f"{c:,.0f} opportunity" if c == 1 else f"{c:,.0f} opportunities" for c in counts]
+    hovertemplate += "<extra></extra>"
     fig = go.Figure(
         go.Bar(
             x=values,
@@ -759,7 +775,8 @@ def make_owner_leaderboard(owners, values, color, title, x_title, y_title, heigh
             textposition="outside",
             textfont=dict(color=PRIMARY_INK, size=11),
             cliponaxis=False,
-            hovertemplate="<b>%{y}</b><br>" + f"{x_title}: " + "$%{x:,.0f}<extra></extra>",
+            customdata=customdata,
+            hovertemplate=hovertemplate,
         )
     )
     fig.update_layout(
@@ -1681,6 +1698,41 @@ def render_owner_insights(df_base, has_la_exp, *, tab_ns, page_title):
 
         st.divider()
 
+        # ── Table: Revenue Renewal % by Owner and Year ───────────────────────
+        st.subheader("Revenue Renewal % by Owner and Year")
+        st.caption(
+            "Dollar-weighted companion to Product Renewal % above -- SUM(weighted revenue) / SUM(Last Year of "
+            "Current ACV), where weighted revenue is First 12 Month Revenue for Closed Won opportunities and "
+            "Expected Revenue otherwise (same formula as the Renewals tab's Revenue % line). Scoped to "
+            "Renewal-type opportunities only (Existing Client - Renewal / Renewal-Upsell) -- Last Year of "
+            "Current ACV only means something for accounts that had a prior renewal to begin with. Blank means "
+            "the owner had no renewal-type opportunities that year."
+        )
+        renewal_df = fdf[fdf["Type"].isin(RENEWAL_TYPES)].copy()
+        if renewal_df.empty:
+            st.info("No renewal-type opportunities in the current filters.")
+        else:
+            renewal_df["_weighted_revenue"] = renewal_df["Expected Revenue"].where(
+                renewal_df["Stage"] != CLOSED_WON_STAGE, renewal_df["First 12 Month Revenue"]
+            )
+            rev_tbl = renewal_df.pivot_table(index="Opportunity Owner", columns="_year", values="_weighted_revenue", aggfunc="sum")
+            acv_tbl = renewal_df.pivot_table(index="Opportunity Owner", columns="_year", values="Last Year of Current ACV", aggfunc="sum")
+            rev_tbl, acv_tbl = rev_tbl.align(acv_tbl, fill_value=0)
+            revenue_pct_tbl = (rev_tbl / acv_tbl.replace(0, pd.NA) * 100).reindex(owner_order)
+            revenue_pct_tbl.columns = [str(int(c)) for c in revenue_pct_tbl.columns]
+
+            total_weighted_rev = renewal_df.groupby("Opportunity Owner")["_weighted_revenue"].sum().reindex(owner_order)
+            total_acv = renewal_df.groupby("Opportunity Owner")["Last Year of Current ACV"].sum().reindex(owner_order)
+            revenue_pct_tbl["All Years"] = total_weighted_rev / total_acv.replace(0, pd.NA) * 100
+
+            display_revenue_pct = revenue_pct_tbl.reset_index()
+            revenue_pct_cols = [c for c in display_revenue_pct.columns if c != "Opportunity Owner"]
+            for c in revenue_pct_cols:
+                display_revenue_pct[c] = display_revenue_pct[c].map(lambda v: f"{v:.0f}%" if pd.notna(v) else "—")
+            st.dataframe(display_revenue_pct, hide_index=True, width="stretch")
+
+        st.divider()
+
         # ── Table: Opportunity Count by Owner and Stage ──────────────────────
         st.subheader("Opportunity Count by Owner and Stage")
         stage_tbl = fdf.pivot_table(
@@ -1777,13 +1829,191 @@ def render_owner_insights(df_base, has_la_exp, *, tab_ns, page_title):
             )
 
 
+def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
+    """
+    Account-centric mirror of render_owner_insights: same filter panel,
+    same KPI-row/table/leaderboard shape, but keyed by Account Name instead
+    of Opportunity Owner. Always buckets by calendar year and uses Close
+    Date only (no Contract Date Metric toggle), same as Owner Insights. No
+    click-to-filter interactivity.
+
+    - KPI row: Total Accounts, Total Opportunities, Overall Win Rate, Total
+      Potential Amount.
+    - Table: Opportunity Count by Account and Stage -- shows every account
+      (a plain scrollable dataframe, same as Owner Insights' table; unlike
+      the leaderboard charts below, a table doesn't get visually squished by
+      row count the way a bar chart's height does).
+    - Chart: Total Value by Account -- sum of Potential Amount across every
+      opportunity regardless of stage, ranked highest to lowest. This is the
+      one chart that directly answers "how much is each account worth, and
+      which accounts carry multiple opportunities" (hover shows the
+      opportunity count alongside the dollar total). Capped to the top
+      MAX_ACCOUNTS_DEFAULT accounts by default (a "Show all" checkbox
+      expands it), same as the other three leaderboards below -- unlike
+      Owner Insights' leaderboards, the account universe can be far larger
+      than the owner universe, so an uncapped chart would get unreadably
+      tall.
+    - Charts: Revenue Won by Account, Open Pipeline Value by Account,
+      Revenue Lost by Account -- direct account-level analogs of the same
+      three leaderboards on Owner Insights, each with its own "Show all"
+      checkbox (the top accounts differ per metric, so they can't share one
+      list).
+    """
+    st.title(page_title)
+
+    panel = render_filter_panel(df_base, has_la_exp, tab_ns=tab_ns)
+    if panel is None:
+        return
+    main_col, fdf, date_field_col, date_field_label, granularity, period_preset, start_date, end_date = panel
+
+    with main_col:
+        if fdf.empty:
+            st.warning("No rows match these filters.")
+            return
+
+        st.caption(
+            f"{period_preset} ({start_date:%b %Y} – {end_date:%b %Y}) · Stage is shown recoded "
+            f"(legacy \"(5a/5) Won\"/\"(5b/5) Lost\" rolled into the current \"(6.../6)\" naming)."
+        )
+
+        fdf = fdf.copy()
+        fdf["_year"] = fdf[date_field_col].dt.year
+        fdf["_stage_display"] = fdf["Stage"].apply(stage_display)
+        won_mask = fdf["Stage"] == CLOSED_WON_STAGE
+
+        # ── KPI row ────────────────────────────────────────────────────────
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Total Accounts", f"{fdf['Account Name'].nunique():,}")
+        k2.metric("Total Opportunities", f"{len(fdf):,}")
+        overall_win_rate = won_mask.sum() / len(fdf) * 100 if len(fdf) else 0.0
+        k3.metric("Overall Win Rate", f"{overall_win_rate:.0f}%")
+        k4.metric("Total Potential Amount", fmt_money(fdf["Potential Amount"].sum()))
+
+        st.divider()
+
+        # ── Table: Opportunity Count by Account and Stage ────────────────────
+        st.subheader("Opportunity Count by Account and Stage")
+        stage_tbl = fdf.pivot_table(
+            index="Account Name", columns="_stage_display", values="Opportunity Owner", aggfunc="count", fill_value=0
+        )
+        present_stages = [s for s in STAGE_ORDER if s in stage_tbl.columns] + (["Other"] if "Other" in stage_tbl.columns else [])
+        stage_tbl = stage_tbl.reindex(columns=present_stages, fill_value=0)
+        stage_tbl["Total"] = stage_tbl.sum(axis=1)
+        stage_tbl = stage_tbl.sort_values("Total", ascending=False)
+
+        display_stage = stage_tbl.reset_index()
+        count_cols = [c for c in display_stage.columns if c != "Account Name"]
+        st.dataframe(
+            display_stage.style.format({c: "{:,.0f}" for c in count_cols}),
+            hide_index=True,
+            width="stretch",
+        )
+
+        st.divider()
+
+        def account_leaderboard(key_suffix, series, counts, color, title, x_title):
+            """Shared top-N-with-"show all" leaderboard renderer for this tab's four account charts."""
+            all_accounts = series.index.tolist()
+            show_all = st.checkbox(
+                f"Show all {len(all_accounts)} accounts (default: top {MAX_ACCOUNTS_DEFAULT})",
+                value=False,
+                key=f"{tab_ns}_show_all_{key_suffix}",
+            )
+            shown = all_accounts if show_all else all_accounts[:MAX_ACCOUNTS_DEFAULT]
+            st.plotly_chart(
+                make_owner_leaderboard(
+                    shown,
+                    series.loc[shown].values.tolist(),
+                    color,
+                    title,
+                    x_title=x_title,
+                    y_title="Account Name",
+                    counts=counts.loc[shown].values.tolist() if counts is not None else None,
+                ),
+                width="stretch",
+                key=f"{tab_ns}_{key_suffix}_chart",
+            )
+
+        # ── Chart: Total Value by Account ─────────────────────────────────────
+        st.subheader("Total Value by Account")
+        opp_counts = fdf.groupby("Account Name").size()
+        multi_opp_accounts = (opp_counts > 1).sum()
+        total_accounts = fdf["Account Name"].nunique()
+        multi_opp_pct = multi_opp_accounts / total_accounts * 100 if total_accounts else 0.0
+        st.caption(
+            "Sum of Potential Amount across every opportunity (any stage, not just Closed Won), ranked highest "
+            f"to lowest -- hover a bar to see how many opportunities make up that total. {multi_opp_accounts:,} "
+            f"of {total_accounts:,} accounts ({multi_opp_pct:.0f}%) have more than one opportunity in the "
+            "current filters."
+        )
+        total_value = fdf.groupby("Account Name")["Potential Amount"].sum()
+        total_value = total_value[total_value > 0].sort_values(ascending=False)
+        if total_value.empty:
+            st.info("No opportunities in the current filters.")
+        else:
+            account_leaderboard(
+                "total_value", total_value, opp_counts, AMOUNT_COLOR, "Total Value by Account", x_title="Potential Amount ($)"
+            )
+
+        st.divider()
+
+        # ── Chart: Revenue Won by Account ─────────────────────────────────────
+        st.subheader("Revenue Won by Account")
+        st.caption("Sum of First 12 Month Revenue for Closed Won opportunities, ranked highest to lowest.")
+        rev_won = fdf[won_mask].groupby("Account Name")["First 12 Month Revenue"].sum()
+        rev_won = rev_won[rev_won > 0].sort_values(ascending=False)
+        if rev_won.empty:
+            st.info("No Closed Won opportunities in the current filters.")
+        else:
+            account_leaderboard(
+                "revenue_won", rev_won, None, REVENUE_WON_COLOR, "Revenue Won by Account", x_title="First 12 Month Revenue ($)"
+            )
+
+        st.divider()
+
+        # ── Chart: Open Pipeline Value by Account ─────────────────────────────
+        st.subheader("Open Pipeline Value by Account")
+        st.caption(
+            "Sum of Potential Amount for opportunities not yet closed (excludes Closed Won, Closed Lost, and "
+            "No Charge), ranked highest to lowest -- which accounts carry the most unclosed business."
+        )
+        open_df = fdf[~fdf["Stage"].isin([CLOSED_WON_STAGE, CLOSED_LOST_STAGE, NO_CHARGE_STAGE])]
+        pipeline = open_df.groupby("Account Name")["Potential Amount"].sum()
+        pipeline = pipeline[pipeline > 0].sort_values(ascending=False)
+        if pipeline.empty:
+            st.info("No open pipeline in the current filters.")
+        else:
+            account_leaderboard(
+                "open_pipeline", pipeline, None, OPEN_PIPELINE_COLOR, "Open Pipeline Value by Account", x_title="Potential Amount ($)"
+            )
+
+        st.divider()
+
+        # ── Chart: Revenue Lost by Account ─────────────────────────────────────
+        st.subheader("Revenue Lost by Account")
+        st.caption(
+            "Sum of Potential Amount (deal size) for Closed Lost opportunities, ranked highest to lowest -- "
+            "how much revenue walked away, by account."
+        )
+        lost_mask = fdf["Stage"] == CLOSED_LOST_STAGE
+        rev_lost = fdf[lost_mask].groupby("Account Name")["Potential Amount"].sum()
+        rev_lost = rev_lost[rev_lost > 0].sort_values(ascending=False)
+        if rev_lost.empty:
+            st.info("No Closed Lost opportunities in the current filters.")
+        else:
+            account_leaderboard(
+                "revenue_lost", rev_lost, None, STATUS_BAD, "Revenue Lost by Account", x_title="Potential Amount ($)"
+            )
+
+
 # ── Tabs ─────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
     [
         "All Opportunities",
         "Renewals Longitudinal Dashboard",
         "Non-Renewals Longitudinal Dashboard",
         "Opportunity Owner Insights",
+        "Account Insights",
         "Trends",
     ]
 )
@@ -1821,11 +2051,14 @@ with tab4:
     render_owner_insights(df_base, has_la_exp, tab_ns="tab4", page_title="Opportunity Owner Insights")
 
 with tab5:
+    render_account_insights(df_base, has_la_exp, tab_ns="tab5", page_title="Account Insights")
+
+with tab6:
     render_trends(
         df_base,
         has_la_exp,
         has_confidence_barometer,
         has_account_health_status,
-        tab_ns="tab5",
+        tab_ns="tab6",
         page_title="Trends",
     )
