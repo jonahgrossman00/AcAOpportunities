@@ -130,32 +130,39 @@ if not _check_password():
 st.markdown(
     """
     <style>
-    /* Dropdown option list: fixed comfortable width regardless of the
-       narrow trigger it's opened from, so no option text is clipped. The
+    /* Dropdown option list: width grows to fit its widest option (instead
+       of a fixed guessed px value, which can still clip if the actual
+       rendered font is wider than expected) regardless of the narrow
+       trigger it's opened from, capped so it never runs off-screen. The
        popover wrapper itself also needs widening -- it clips its child
        list to the trigger's width otherwise. */
     div[data-baseweb="popover"] {
-        width: 420px !important;
-        min-width: 420px !important;
+        width: max-content !important;
+        min-width: 320px !important;
+        max-width: min(640px, 92vw) !important;
     }
     /* The real clipping boundary: an inner wrapper div (identifiable by
        this attribute) between the popover and the option list that keeps
        its own narrow, trigger-matched width with overflow:hidden. */
     div[data-no-focus-lock="true"] {
-        width: 420px !important;
-        min-width: 420px !important;
+        width: max-content !important;
+        min-width: 320px !important;
+        max-width: min(640px, 92vw) !important;
     }
     ul[data-testid="stSelectboxVirtualDropdown"] {
-        width: 420px !important;
-        min-width: 420px !important;
+        width: max-content !important;
+        min-width: 320px !important;
+        max-width: min(640px, 92vw) !important;
     }
     /* Some inner wrapper around each option's label carries its own fixed
        max-width/ellipsis independent of the list's width above -- strip
-       that too, on every descendant of each option row. */
+       that too, on every descendant of each option row, and let long
+       single words wrap rather than overflow the capped width above. */
     ul[data-testid="stSelectboxVirtualDropdown"] li * {
         max-width: none !important;
         overflow: visible !important;
         text-overflow: unset !important;
+        white-space: normal !important;
     }
     /* Selected-value "tag" pills: let the label wrap onto multiple lines
        instead of truncating with an ellipsis. */
