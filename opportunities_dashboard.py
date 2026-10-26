@@ -122,11 +122,11 @@ def _check_password():
 if not _check_password():
     st.stop()
 
-# The filter columns are intentionally narrow (~12.5% of page width each), which
-# cuts off long values like "Existing Client - Renewal/Upsell" or "(4/6) Gaining
+# The filter column is intentionally narrow (~25% of page width), which cuts
+# off long values like "Existing Client - Renewal/Upsell" or "(4/6) Gaining
 # Commitment" -- both in the closed selected-tag pills and in the open dropdown
-# list. Widen just those two pieces (not the columns themselves) via their
-# stable Streamlit/BaseWeb attributes, so selections and options stay readable.
+# list. Widen just those two pieces (not the column itself) via their stable
+# Streamlit/BaseWeb attributes, so selections and options stay readable.
 st.markdown(
     """
     <style>
@@ -882,11 +882,11 @@ def make_category_bar_chart(categories, values, colors, title, x_title, y_title,
 # ── Shared filter panel ──────────────────────────────────────────────────────
 def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show_date_field_toggle=False):
     """
-    Renders the two-column filter panel (Time Range / Time Period / Stage,
-    then Opp't Type / Line of Business / Research University / Opp't Owner)
-    shared by every tab, and returns the filtered dataframe plus the current
-    filter state. `tab_ns` namespaces every widget key so multiple tabs
-    calling this in the same script run never collide.
+    Renders the single-column filter panel (Time Range / Time Period / Stage /
+    Opp't Type / Line of Business / Research University / Opp't Owner) shared
+    by every tab, and returns the filtered dataframe plus the current filter
+    state. `tab_ns` namespaces every widget key so multiple tabs calling this
+    in the same script run never collide.
 
     Returns None if there are no rows with a parseable date for this view
     (after rendering a warning) -- callers should `return` immediately in
@@ -896,8 +896,9 @@ def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show
     if allowed_types:
         df_scope = df_scope[df_scope["Type"].isin(allowed_types)]
 
-    # ── Page layout: main content (left, ~75%) + two filter columns (right, ~25% combined) ──
-    main_col, filter_col1, filter_col2 = st.columns([6, 1, 1])
+    # ── Page layout: main content (left, ~75%) + one filter column (right, ~25%) ──
+    main_col, filter_col1 = st.columns([6, 2])
+    filter_col2 = filter_col1
 
     with filter_col1:
         if show_date_field_toggle:
