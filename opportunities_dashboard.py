@@ -29,8 +29,9 @@ different, segment-trend layout (via `render_trends`):
     the other tabs (via the shared `render_filter_panel`), but tables and
     leaderboards instead of the longitudinal charts -- see that function's
     docstring for the full breakdown. Includes a dollar-weighted "Revenue
-    Renewal % by Owner and Year" table (scoped to Renewal-type opportunities
-    only), alongside the count-based "Product Renewal %" table.
+    Renewal % by Owner and Year" table (SUM(Potential Amount for Closed Won)
+    / SUM(Potential Amount for all opportunities), no Type restriction),
+    alongside the count-based "Product Renewal %" table.
   - "Account Insights": no Type restriction, same filter panel, an
     account-level mirror of Owner Insights -- see `render_account_insights`'s
     docstring for the full breakdown.
@@ -1701,35 +1702,27 @@ def render_owner_insights(df_base, has_la_exp, *, tab_ns, page_title):
         # ── Table: Revenue Renewal % by Owner and Year ───────────────────────
         st.subheader("Revenue Renewal % by Owner and Year")
         st.caption(
-            "Dollar-weighted companion to Product Renewal % above -- SUM(weighted revenue) / SUM(Last Year of "
-            "Current ACV), where weighted revenue is First 12 Month Revenue for Closed Won opportunities and "
-            "Expected Revenue otherwise (same formula as the Renewals tab's Revenue % line). Scoped to "
-            "Renewal-type opportunities only (Existing Client - Renewal / Renewal-Upsell) -- Last Year of "
-            "Current ACV only means something for accounts that had a prior renewal to begin with. Blank means "
-            "the owner had no renewal-type opportunities that year."
+            "Dollar-weighted companion to Product Renewal % above -- SUM(Potential Amount for Closed Won "
+            "opportunities) / SUM(Potential Amount for all opportunities), by year. Potential Amount is First "
+            "12 Month Revenue for Closed Won opportunities and Amount otherwise, so this is just the share of "
+            "total deal value this owner actually won, across every opportunity type (not just renewals). Blank "
+            "means the owner had no opportunities that year (not a 0% rate)."
         )
-        renewal_df = fdf[fdf["Type"].isin(RENEWAL_TYPES)].copy()
-        if renewal_df.empty:
-            st.info("No renewal-type opportunities in the current filters.")
-        else:
-            renewal_df["_weighted_revenue"] = renewal_df["Expected Revenue"].where(
-                renewal_df["Stage"] != CLOSED_WON_STAGE, renewal_df["First 12 Month Revenue"]
-            )
-            rev_tbl = renewal_df.pivot_table(index="Opportunity Owner", columns="_year", values="_weighted_revenue", aggfunc="sum")
-            acv_tbl = renewal_df.pivot_table(index="Opportunity Owner", columns="_year", values="Last Year of Current ACV", aggfunc="sum")
-            rev_tbl, acv_tbl = rev_tbl.align(acv_tbl, fill_value=0)
-            revenue_pct_tbl = (rev_tbl / acv_tbl.replace(0, pd.NA) * 100).reindex(owner_order)
-            revenue_pct_tbl.columns = [str(int(c)) for c in revenue_pct_tbl.columns]
+        won_amount_tbl = fdf[won_mask].pivot_table(index="Opportunity Owner", columns="_year", values="Potential Amount", aggfunc="sum")
+        total_amount_tbl = fdf.pivot_table(index="Opportunity Owner", columns="_year", values="Potential Amount", aggfunc="sum")
+        won_amount_tbl = won_amount_tbl.reindex_like(total_amount_tbl).fillna(0)
+        revenue_pct_tbl = (won_amount_tbl / total_amount_tbl.replace(0, pd.NA) * 100).reindex(owner_order)
+        revenue_pct_tbl.columns = [str(int(c)) for c in revenue_pct_tbl.columns]
 
-            total_weighted_rev = renewal_df.groupby("Opportunity Owner")["_weighted_revenue"].sum().reindex(owner_order)
-            total_acv = renewal_df.groupby("Opportunity Owner")["Last Year of Current ACV"].sum().reindex(owner_order)
-            revenue_pct_tbl["All Years"] = total_weighted_rev / total_acv.replace(0, pd.NA) * 100
+        total_won_amount = fdf[won_mask].groupby("Opportunity Owner")["Potential Amount"].sum().reindex(owner_order).fillna(0)
+        total_amount = fdf.groupby("Opportunity Owner")["Potential Amount"].sum().reindex(owner_order)
+        revenue_pct_tbl["All Years"] = total_won_amount / total_amount.replace(0, pd.NA) * 100
 
-            display_revenue_pct = revenue_pct_tbl.reset_index()
-            revenue_pct_cols = [c for c in display_revenue_pct.columns if c != "Opportunity Owner"]
-            for c in revenue_pct_cols:
-                display_revenue_pct[c] = display_revenue_pct[c].map(lambda v: f"{v:.0f}%" if pd.notna(v) else "—")
-            st.dataframe(display_revenue_pct, hide_index=True, width="stretch")
+        display_revenue_pct = revenue_pct_tbl.reset_index()
+        revenue_pct_cols = [c for c in display_revenue_pct.columns if c != "Opportunity Owner"]
+        for c in revenue_pct_cols:
+            display_revenue_pct[c] = display_revenue_pct[c].map(lambda v: f"{v:.0f}%" if pd.notna(v) else "—")
+        st.dataframe(display_revenue_pct, hide_index=True, width="stretch")
 
         st.divider()
 
