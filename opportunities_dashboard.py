@@ -413,6 +413,14 @@ for col in ("Account Name", "Type", "Line of Business", "Stage", "Research Unive
 for col in ("Confidence Barometer", "Account Health Status"):
     if col in df_base.columns:
         df_base[col] = clean_label(df_base[col], "(none)")
+# AAU Candidate / AAU Member? are Salesforce checkboxes (a binary yes/no, not
+# a multi-value picklist). The live report pull returns them as lowercase
+# text ("true"/"false"), which doesn't match BOOLEAN_ORDER's capitalized
+# "True"/"False" -- left as-is, every row silently fell into the charts'
+# "Other" bucket instead of splitting by the actual checkbox value.
+for col in ("AAU Candidate", "AAU Member?"):
+    if col in df_base.columns:
+        df_base[col] = df_base[col].astype(str).str.strip().str.lower().map({"true": "True", "false": "False"})
 for col in ("Amount", "Expected Revenue", "First 12 Month Revenue", "Last Year of Current ACV", "Potential Amount"):
     if col in df_base.columns:
         df_base[col] = pd.to_numeric(df_base[col], errors="coerce").fillna(0.0)
