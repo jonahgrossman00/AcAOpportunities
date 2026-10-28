@@ -906,7 +906,7 @@ def make_category_bar_chart(categories, values, colors, title, x_title, y_title,
 
 
 # ── Shared filter panel ──────────────────────────────────────────────────────
-def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show_date_field_toggle=False):
+def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show_date_field_toggle=False, show_account_search=False):
     """
     Renders the single-column filter panel (Time Range / Time Period / Stage /
     Opp't Type / Line of Business / Research University / Opp't Owner) shared
@@ -1022,6 +1022,16 @@ def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show
             key=f"{tab_ns}_sel_owner",
         )
 
+        account_search = ""
+        if show_account_search:
+            st.markdown("**Search Account Name**")
+            account_search = st.text_input(
+                "Search Account Name",
+                placeholder="Type to filter...",
+                label_visibility="collapsed",
+                key=f"{tab_ns}_account_search",
+            )
+
     fdf = df
     for column, selected in (
         ("Type", sel_type),
@@ -1032,6 +1042,9 @@ def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show
     ):
         if selected:
             fdf = fdf[fdf[column].isin(selected)]
+
+    if show_account_search and account_search:
+        fdf = fdf[fdf["Account Name"].str.contains(account_search, case=False, na=False, regex=False)]
 
     fdf = fdf[(fdf[date_field_col].dt.date >= start_date) & (fdf[date_field_col].dt.date <= end_date)]
 
@@ -1827,11 +1840,19 @@ def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
     Account-centric mirror of render_owner_insights: same filter panel,
     same KPI-row/table/leaderboard shape, but keyed by Account Name instead
     of Opportunity Owner. Always buckets by calendar year and uses Close
-    Date only (no Contract Date Metric toggle), same as Owner Insights. No
+    Date only (no Contract Date Metric toggle), same as Owner Insights. Also
+    adds a free-text Account Name search (via `show_account_search=True` on
+    render_filter_panel) since the account universe is far larger than the
+    owner universe and a multiselect alone doesn't scale to it. No
     click-to-filter interactivity.
 
     - KPI row: Total Accounts, Total Opportunities, Overall Win Rate, Total
       Potential Amount.
+    - Table: Account Summary -- the first table on the tab, one row per
+      account: Products Owned (distinct Line of Business values with a
+      Closed Won), Open Opportunities (count in stages (0/6)-(5/6)), Total
+      Value (Potential Amount summed across every stage), and Open Pipeline
+      (Potential Amount summed across open stages only).
     - Table: Opportunity Count by Account and Stage -- shows every account
       (a plain scrollable dataframe, same as Owner Insights' table; unlike
       the leaderboard charts below, a table doesn't get visually squished by
@@ -1854,7 +1875,7 @@ def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
     """
     st.title(page_title)
 
-    panel = render_filter_panel(df_base, has_la_exp, tab_ns=tab_ns)
+    panel = render_filter_panel(df_base, has_la_exp, tab_ns=tab_ns, show_account_search=True)
     if panel is None:
         return
     main_col, fdf, date_field_col, date_field_label, granularity, period_preset, start_date, end_date = panel
@@ -1873,6 +1894,7 @@ def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
         fdf["_year"] = fdf[date_field_col].dt.year
         fdf["_stage_display"] = fdf["Stage"].apply(stage_display)
         won_mask = fdf["Stage"] == CLOSED_WON_STAGE
+        open_df = fdf[~fdf["Stage"].isin([CLOSED_WON_STAGE, CLOSED_LOST_STAGE, NO_CHARGE_STAGE])]
 
         # ── KPI row ────────────────────────────────────────────────────────
         k1, k2, k3, k4 = st.columns(4)
@@ -1881,6 +1903,40 @@ def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
         overall_win_rate = won_mask.sum() / len(fdf) * 100 if len(fdf) else 0.0
         k3.metric("Overall Win Rate", f"{overall_win_rate:.0f}%")
         k4.metric("Total Potential Amount", fmt_money(fdf["Potential Amount"].sum()))
+
+        st.divider()
+
+        # ── Table: Account Summary ───────────────────────────────────────────
+        st.subheader("Account Summary")
+        st.caption(
+            "Products Owned = distinct Line of Business values with a Closed Won opportunity for that account. "
+            "Open Opportunities = opportunities in stages (0/6) through (5/6) (not yet Closed Won, Closed Lost, "
+            "or No Charge). Total Value = sum of Potential Amount across every opportunity, any stage. Open "
+            "Pipeline = sum of Potential Amount for open opportunities only."
+        )
+        summary_tbl = pd.DataFrame(
+            {
+                "Products Owned": fdf[won_mask].groupby("Account Name")["Line of Business"].nunique(),
+                "Open Opportunities": open_df.groupby("Account Name").size(),
+                "Total Value": fdf.groupby("Account Name")["Potential Amount"].sum(),
+                "Open Pipeline": open_df.groupby("Account Name")["Potential Amount"].sum(),
+            }
+        ).reindex(fdf["Account Name"].unique())
+        summary_tbl = summary_tbl.fillna(0).sort_values("Total Value", ascending=False)
+        summary_tbl.index.name = "Account Name"
+        display_summary = summary_tbl.reset_index()
+        st.dataframe(
+            display_summary.style.format(
+                {
+                    "Products Owned": "{:,.0f}",
+                    "Open Opportunities": "{:,.0f}",
+                    "Total Value": fmt_money,
+                    "Open Pipeline": fmt_money,
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+        )
 
         st.divider()
 
@@ -1959,7 +2015,7 @@ def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
             st.info("No Closed Won opportunities in the current filters.")
         else:
             account_leaderboard(
-                "revenue_won", rev_won, None, REVENUE_WON_COLOR, "Revenue Won by Account", x_title="First 12 Month Revenue ($)"
+                "revenue_won", rev_won, None, STATUS_GOOD, "Revenue Won by Account", x_title="First 12 Month Revenue ($)"
             )
 
         st.divider()
@@ -1970,7 +2026,6 @@ def render_account_insights(df_base, has_la_exp, *, tab_ns, page_title):
             "Sum of Potential Amount for opportunities not yet closed (excludes Closed Won, Closed Lost, and "
             "No Charge), ranked highest to lowest -- which accounts carry the most unclosed business."
         )
-        open_df = fdf[~fdf["Stage"].isin([CLOSED_WON_STAGE, CLOSED_LOST_STAGE, NO_CHARGE_STAGE])]
         pipeline = open_df.groupby("Account Name")["Potential Amount"].sum()
         pipeline = pipeline[pipeline > 0].sort_values(ascending=False)
         if pipeline.empty:
