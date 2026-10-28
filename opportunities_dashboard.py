@@ -927,6 +927,16 @@ def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show
     filter_col2 = filter_col1
 
     with filter_col1:
+        account_search = ""
+        if show_account_search:
+            st.markdown("**Search Account Name**")
+            account_search = st.text_input(
+                "Search Account Name",
+                placeholder="Type to filter...",
+                label_visibility="collapsed",
+                key=f"{tab_ns}_account_search",
+            )
+
         if show_date_field_toggle:
             st.markdown("**Contract Date Metric**")
             date_options = ["Close Date", "LA Expiration Date"] if has_la_exp else ["Close Date"]
@@ -1021,16 +1031,6 @@ def render_filter_panel(df_base, has_la_exp, *, tab_ns, allowed_types=None, show
             label_visibility="collapsed",
             key=f"{tab_ns}_sel_owner",
         )
-
-        account_search = ""
-        if show_account_search:
-            st.markdown("**Search Account Name**")
-            account_search = st.text_input(
-                "Search Account Name",
-                placeholder="Type to filter...",
-                label_visibility="collapsed",
-                key=f"{tab_ns}_account_search",
-            )
 
     fdf = df
     for column, selected in (
